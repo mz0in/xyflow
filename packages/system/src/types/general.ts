@@ -22,10 +22,14 @@ export type SetCenter = (x: number, y: number, options?: SetCenterOptions) => vo
 export type FitBounds = (bounds: Rect, options?: FitBoundsOptions) => void;
 
 export type Connection = {
-  source: string | null;
-  target: string | null;
+  source: string;
+  target: string;
   sourceHandle: string | null;
   targetHandle: string | null;
+};
+
+export type HandleConnection = Connection & {
+  edgeId: string;
 };
 
 export type ConnectionStatus = 'valid' | 'invalid';
@@ -123,11 +127,7 @@ export type SelectionRect = Rect & {
 
 export type OnError = (id: string, message: string) => void;
 
-export type UpdateNodePositions = (
-  dragItems: NodeDragItem[] | NodeBase[],
-  positionChanged?: boolean,
-  dragging?: boolean
-) => void;
+export type UpdateNodePositions = (dragItems: NodeDragItem[] | NodeBase[], dragging?: boolean) => void;
 export type PanBy = (delta: XYPosition) => boolean;
 
 export type UpdateConnection = (params: {
@@ -136,3 +136,16 @@ export type UpdateConnection = (params: {
   connectionStartHandle: ConnectingHandle | null;
   connectionEndHandle: ConnectingHandle | null;
 }) => void;
+
+export type ColorModeClass = 'light' | 'dark';
+export type ColorMode = ColorModeClass | 'system';
+
+export type ConnectionLookup = Map<string, Map<string, HandleConnection>>;
+
+export type OnBeforeDeleteBase<NodeType extends NodeBase = NodeBase, EdgeType extends EdgeBase = EdgeBase> = ({
+  nodes,
+  edges,
+}: {
+  nodes: NodeType[];
+  edges: EdgeType[];
+}) => Promise<boolean | { nodes: NodeType[]; edges: EdgeType[] }>;

@@ -1,26 +1,22 @@
 import { memo } from 'react';
 
-import FlowRenderer from '../FlowRenderer';
-import NodeRenderer from '../NodeRenderer';
-import EdgeRenderer from '../EdgeRenderer';
-import ViewportWrapper from '../Viewport';
-import useOnInitHandler from '../../hooks/useOnInitHandler';
-import useViewportSync from '../../hooks/useViewportSync';
-import ConnectionLine from '../../components/ConnectionLine';
-import type { ReactFlowProps } from '../../types';
-import { createNodeTypes } from '../NodeRenderer/utils';
-import { createEdgeTypes } from '../EdgeRenderer/utils';
-import { useNodeOrEdgeTypes } from './utils';
+import { FlowRenderer } from '../FlowRenderer';
+import { NodeRenderer } from '../NodeRenderer';
+import { EdgeRenderer } from '../EdgeRenderer';
+import { Viewport } from '../Viewport';
+import { useOnInitHandler } from '../../hooks/useOnInitHandler';
+import { useViewportSync } from '../../hooks/useViewportSync';
+import { ConnectionLineWrapper } from '../../components/ConnectionLine';
+import { useNodeOrEdgeTypesWarning } from './useNodeOrEdgeTypesWarning';
+import type { Edge, Node, ReactFlowProps } from '../../types';
 
-export type GraphViewProps = Omit<
-  ReactFlowProps,
-  'onSelectionChange' | 'nodes' | 'edges' | 'nodeTypes' | 'edgeTypes' | 'onMove' | 'onMoveStart' | 'onMoveEnd'
+export type GraphViewProps<NodeType extends Node = Node, EdgeType extends Edge = Edge> = Omit<
+  ReactFlowProps<NodeType, EdgeType>,
+  'onSelectionChange' | 'nodes' | 'edges' | 'onMove' | 'onMoveStart' | 'onMoveEnd' | 'elevateEdgesOnSelect'
 > &
   Required<
     Pick<
-      ReactFlowProps,
-      | 'nodeTypes'
-      | 'edgeTypes'
+      ReactFlowProps<NodeType, EdgeType>,
       | 'selectionKeyCode'
       | 'deleteKeyCode'
       | 'multiSelectionKeyCode'
@@ -30,7 +26,6 @@ export type GraphViewProps = Omit<
       | 'minZoom'
       | 'maxZoom'
       | 'defaultMarkerColor'
-      | 'noDragClassName'
       | 'noDragClassName'
       | 'noWheelClassName'
       | 'noPanClassName'
@@ -42,7 +37,7 @@ export type GraphViewProps = Omit<
     rfId: string;
   };
 
-const GraphView = ({
+function GraphViewComponent<NodeType extends Node = Node, EdgeType extends Edge = Edge>({
   nodeTypes,
   edgeTypes,
   onInit,
@@ -100,22 +95,21 @@ const GraphView = ({
   noDragClassName,
   noWheelClassName,
   noPanClassName,
-  elevateEdgesOnSelect,
   disableKeyboardA11y,
   nodeOrigin,
   nodeExtent,
   rfId,
   viewport,
   onViewportChange,
-}: GraphViewProps) => {
-  const nodeTypesWrapped = useNodeOrEdgeTypes(nodeTypes, createNodeTypes);
-  const edgeTypesWrapped = useNodeOrEdgeTypes(edgeTypes, createEdgeTypes);
+}: GraphViewProps<NodeType, EdgeType>) {
+  useNodeOrEdgeTypesWarning(nodeTypes);
+  useNodeOrEdgeTypesWarning(edgeTypes);
 
   useOnInitHandler(onInit);
   useViewportSync(viewport);
 
   return (
-    <FlowRenderer
+    <FlowRenderer<NodeType>
       onPaneClick={onPaneClick}
       onPaneMouseEnter={onPaneMouseEnter}
       onPaneMouseMove={onPaneMouseMove}
@@ -152,9 +146,9 @@ const GraphView = ({
       onViewportChange={onViewportChange}
       isControlledViewport={!!viewport}
     >
-      <ViewportWrapper>
-        <EdgeRenderer
-          edgeTypes={edgeTypesWrapped}
+      <Viewport>
+        <EdgeRenderer<EdgeType>
+          edgeTypes={edgeTypes}
           onEdgeClick={onEdgeClick}
           onEdgeDoubleClick={onEdgeDoubleClick}
           onEdgeUpdate={onEdgeUpdate}
@@ -168,21 +162,18 @@ const GraphView = ({
           edgeUpdaterRadius={edgeUpdaterRadius}
           defaultMarkerColor={defaultMarkerColor}
           noPanClassName={noPanClassName}
-          elevateEdgesOnSelect={!!elevateEdgesOnSelect}
           disableKeyboardA11y={disableKeyboardA11y}
           rfId={rfId}
-        >
-          <ConnectionLine
-            style={connectionLineStyle}
-            type={connectionLineType}
-            component={connectionLineComponent}
-            containerStyle={connectionLineContainerStyle}
-          />
-        </EdgeRenderer>
+        />
+        <ConnectionLineWrapper
+          style={connectionLineStyle}
+          type={connectionLineType}
+          component={connectionLineComponent}
+          containerStyle={connectionLineContainerStyle}
+        />
         <div className="react-flow__edgelabel-renderer" />
-
-        <NodeRenderer
-          nodeTypes={nodeTypesWrapped}
+        <NodeRenderer<NodeType>
+          nodeTypes={nodeTypes}
           onNodeClick={onNodeClick}
           onNodeDoubleClick={onNodeDoubleClick}
           onNodeMouseEnter={onNodeMouseEnter}
@@ -197,11 +188,12 @@ const GraphView = ({
           nodeExtent={nodeExtent}
           rfId={rfId}
         />
-      </ViewportWrapper>
+        <div className="react-flow__viewport-portal" />
+      </Viewport>
     </FlowRenderer>
   );
-};
+}
 
-GraphView.displayName = 'GraphView';
+GraphViewComponent.displayName = 'GraphView';
 
-export default memo(GraphView);
+export const GraphView = memo(GraphViewComponent) as typeof GraphViewComponent;

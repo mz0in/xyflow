@@ -1,12 +1,12 @@
 import { getContext, setContext } from 'svelte';
 import { derived, get, writable } from 'svelte/store';
 import {
-  internalsSymbol,
   createMarkerIds,
   fitView as fitViewUtil,
   getElementsToRemove,
   panBy as panBySystem,
   updateNodeDimensions as updateNodeDimensionsSystem,
+  addEdge as addEdgeUtil,
   type UpdateNodePositions,
   type NodeDimensionUpdate,
   type ViewportHelperFunctionOptions,
@@ -14,17 +14,14 @@ import {
   type XYPosition,
   type CoordinateExtent,
   type UpdateConnection,
-  type NodeBase,
-  type NodeDragItem,
   errorMessages
 } from '@xyflow/system';
 
-import { addEdge as addEdgeUtil } from '$lib/utils';
 import type { EdgeTypes, NodeTypes, Node, Edge, FitViewOptions, ConnectionData } from '$lib/types';
 import { initialEdgeTypes, initialNodeTypes, getInitialStore } from './initial-store';
 import type { SvelteFlowStore } from './types';
 import { syncNodeStores, syncEdgeStores, syncViewportStores } from './utils';
-import { getEdgeTree } from './edge-tree';
+import { getVisibleEdges } from './visible-edges';
 import { getVisibleNodes } from './visible-nodes';
 import { getDerivedConnectionProps } from './derived-connection-props';
 
@@ -65,31 +62,29 @@ export function createStore({
   }
 
   const updateNodePositions: UpdateNodePositions = (nodeDragItems, dragging = false) => {
-    store.nodes.update((nds) => {
-      return nds.map((n) => {
-        const nodeDragItem = (nodeDragItems as Array<NodeBase | NodeDragItem>).find(
-          (ndi) => ndi.id === n.id
-        );
+    const nodeLookup = get(store.nodeLookup);
 
-        if (nodeDragItem) {
-          return {
-            ...n,
-            [internalsSymbol]: n[internalsSymbol],
-            dragging,
-            positionAbsolute: nodeDragItem.positionAbsolute,
-            position: nodeDragItem.position
-          };
-        }
+    nodeDragItems.forEach((nodeDragItem) => {
+      const node = nodeLookup.get(nodeDragItem.id);
 
-        return n;
-      });
+      if (node) {
+        node.position = nodeDragItem.position;
+        node.dragging = dragging;
+        node.computed = {
+          ...node.computed,
+          positionAbsolute: nodeDragItem.computed?.positionAbsolute
+        };
+      }
     });
+
+    store.nodes.set(get(store.nodes));
   };
 
-  function updateNodeDimensions(updates: NodeDimensionUpdate[]) {
+  function updateNodeDimensions(updates: Map<string, NodeDimensionUpdate>) {
     const nextNodes = updateNodeDimensionsSystem(
       updates,
       get(store.nodes),
+      get(store.nodeLookup),
       get(store.domNode),
       get(store.nodeOrigin)
     );
@@ -108,6 +103,10 @@ export function createStore({
     }
 
     store.nodes.set(nextNodes);
+
+    if (!get(store.nodesInitialized)) {
+      store.nodesInitialized.set(true);
+    }
   }
 
   function fitView(nodes: Node[], options?: FitViewOptions) {
@@ -174,43 +173,38 @@ export function createStore({
     }
   }
 
-  function resetSelectedItem<T extends Node | Edge>(ids: string[]) {
-    return (item: T) => {
-      if (item.selected && ids.includes(item.id)) {
-        return {
-          ...item,
-          selected: false
-        };
+  function resetSelectedElements(elements: Node[] | Edge[]) {
+    let elementsChanged = false;
+    elements.forEach((element) => {
+      if (element.selected) {
+        element.selected = false;
+        elementsChanged = true;
       }
-
-      return item;
-    };
+    });
+    return elementsChanged;
   }
 
   function unselectNodesAndEdges(params?: { nodes?: Node[]; edges?: Edge[] }) {
-    const nodeIdsToUnselect = (params?.nodes ? params.nodes : get(store.nodes)).map(
-      (item) => item.id
-    );
-    const edgeIdsToUnselect = (params?.edges ? params.edges : get(store.edges)).map(
-      (item) => item.id
-    );
+    const resetNodes = resetSelectedElements(params?.nodes || get(store.nodes));
+    if (resetNodes) store.nodes.set(get(store.nodes));
 
-    store.nodes.update((ns) => ns.map(resetSelectedItem(nodeIdsToUnselect)));
-    store.edges.update((es) => es.map(resetSelectedItem(edgeIdsToUnselect)));
+    const resetEdges = resetSelectedElements(params?.edges || get(store.edges));
+    if (resetEdges) store.edges.set(get(store.edges));
   }
 
-  store.deleteKeyPressed.subscribe((deleteKeyPressed) => {
+  store.deleteKeyPressed.subscribe(async (deleteKeyPressed) => {
     if (deleteKeyPressed) {
       const nodes = get(store.nodes);
       const edges = get(store.edges);
       const selectedNodes = nodes.filter((node) => node.selected);
       const selectedEdges = edges.filter((edge) => edge.selected);
 
-      const { matchingNodes, matchingEdges } = getElementsToRemove<Node, Edge>({
+      const { nodes: matchingNodes, edges: matchingEdges } = await getElementsToRemove({
         nodesToRemove: selectedNodes,
         edgesToRemove: selectedEdges,
         nodes,
-        edges
+        edges,
+        onBeforeDelete: get(store.onbeforedelete)
       });
 
       if (matchingNodes.length || matchingEdges.length) {
@@ -220,6 +214,11 @@ export function createStore({
         store.edges.update((eds) =>
           eds.filter((edge) => !matchingEdges.some((mE) => mE.id === edge.id))
         );
+
+        get(store.ondelete)?.({
+          nodes: matchingNodes,
+          edges: matchingEdges
+        });
       }
     }
   });
@@ -343,13 +342,36 @@ export function createStore({
     ...store,
 
     // derived state
-    edgeTree: getEdgeTree(store),
     connection: getDerivedConnectionProps(store, currentConnection),
+    visibleEdges: getVisibleEdges(store),
     visibleNodes: getVisibleNodes(store),
     markers: derived(
       [store.edges, store.defaultMarkerColor, store.flowId],
       ([edges, defaultColor, id]) => createMarkerIds(edges, { defaultColor, id })
     ),
+    initialized: (() => {
+      let initialized = false;
+      const initialNodesLength = get(store.nodes).length;
+      const initialEdgesLength = get(store.edges).length;
+      return derived(
+        [store.nodesInitialized, store.edgesInitialized, store.viewportInitialized],
+        ([nodesInitialized, edgesInitialized, viewportInitialized]) => {
+          // If it was already initialized, return true from then on
+          if (initialized) return initialized;
+
+          // if it hasn't been initialised check if it's now
+          if (initialNodesLength === 0) {
+            initialized = viewportInitialized;
+          } else if (initialEdgesLength === 0) {
+            initialized = viewportInitialized && nodesInitialized;
+          } else {
+            initialized = viewportInitialized && nodesInitialized && edgesInitialized;
+          }
+
+          return initialized;
+        }
+      );
+    })(),
 
     // actions
     syncNodeStores: (nodes) => syncNodeStores(store.nodes, nodes),

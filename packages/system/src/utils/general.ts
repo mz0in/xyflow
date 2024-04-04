@@ -9,6 +9,7 @@ import type {
   SnapGrid,
   Transform,
 } from '../types';
+import { type Viewport } from '../types';
 import { getNodePositionWithOrigin } from './graph';
 
 export const clamp = (val: number, min = 0, max = 1): number => Math.min(Math.max(val, min), max);
@@ -18,8 +19,14 @@ export const clampPosition = (position: XYPosition = { x: 0, y: 0 }, extent: Coo
   y: clamp(position.y, extent[0][1], extent[1][1]),
 });
 
-// returns a number between 0 and 1 that represents the velocity of the movement
-// when the mouse is close to the edge of the canvas
+/**
+ * Calculates the velocity of panning when the mouse is close to the edge of the canvas
+ * @internal
+ * @param value - One dimensional poition of the mouse (x or y)
+ * @param min - Minimal position on canvas before panning starts
+ * @param max - Maximal position on canvas before panning starts
+ * @returns - A number between 0 and 1 that represents the velocity of panning
+ */
 const calcAutoPanVelocity = (value: number, min: number, max: number): number => {
   if (value < min) {
     return clamp(Math.abs(value - min), 1, 50) / 50;
@@ -63,8 +70,8 @@ export const nodeToRect = (node: NodeBase, nodeOrigin: NodeOrigin = [0, 0]): Rec
 
   return {
     ...positionAbsolute,
-    width: node.width || 0,
-    height: node.height || 0,
+    width: node.computed?.width ?? node.width ?? 0,
+    height: node.computed?.height ?? node.height ?? 0,
   };
 };
 
@@ -73,8 +80,8 @@ export const nodeToBox = (node: NodeBase, nodeOrigin: NodeOrigin = [0, 0]): Box 
 
   return {
     ...positionAbsolute,
-    x2: positionAbsolute.x + (node.width || 0),
-    y2: positionAbsolute.y + (node.height || 0),
+    x2: positionAbsolute.x + (node.computed?.width ?? node.width ?? 0),
+    y2: positionAbsolute.y + (node.computed?.height ?? node.height ?? 0),
   };
 };
 
@@ -126,12 +133,12 @@ export const getPositionWithOrigin = ({
   };
 };
 
-export function snapPosition(position: XYPosition, snapGrid: SnapGrid = [1, 1]): XYPosition {
+export const snapPosition = (position: XYPosition, snapGrid: SnapGrid = [1, 1]): XYPosition => {
   return {
     x: snapGrid[0] * Math.round(position.x / snapGrid[0]),
     y: snapGrid[1] * Math.round(position.y / snapGrid[1]),
   };
-}
+};
 
 export const pointToRendererPoint = (
   { x, y }: XYPosition,
@@ -154,14 +161,30 @@ export const rendererPointToPoint = ({ x, y }: XYPosition, [tx, ty, tScale]: Tra
   };
 };
 
-export const getTransformForBounds = (
+/**
+ * Returns a viewport that encloses the given bounds with optional padding.
+ * @public
+ * @remarks You can determine bounds of nodes with {@link getNodesBounds} and {@link getBoundsOfRects}
+ * @param bounds - Bounds to fit inside viewport
+ * @param width - Width of the viewport
+ * @param height  - Height of the viewport
+ * @param minZoom - Minimum zoom level of the resulting viewport
+ * @param maxZoom - Maximum zoom level of the resulting viewport
+ * @param padding - Optional padding around the bounds
+ * @returns A transforned {@link Viewport} that encloses the given bounds which you can pass to e.g. {@link setViewport}
+ * @example
+ * const { x, y, zoom } = getViewportForBounds(
+  { x: 0, y: 0, width: 100, height: 100},
+  1200, 800, 0.5, 2);
+ */
+export const getViewportForBounds = (
   bounds: Rect,
   width: number,
   height: number,
   minZoom: number,
   maxZoom: number,
   padding: number
-): Transform => {
+): Viewport => {
   const xZoom = width / (bounds.width * (1 + padding));
   const yZoom = height / (bounds.height * (1 + padding));
   const zoom = Math.min(xZoom, yZoom);
@@ -171,7 +194,27 @@ export const getTransformForBounds = (
   const x = width / 2 - boundsCenterX * clampedZoom;
   const y = height / 2 - boundsCenterY * clampedZoom;
 
-  return [x, y, clampedZoom];
+  return { x, y, zoom: clampedZoom };
 };
 
 export const isMacOs = () => typeof navigator !== 'undefined' && navigator?.userAgent?.indexOf('Mac') >= 0;
+
+export function isCoordinateExtent(extent?: CoordinateExtent | 'parent'): extent is CoordinateExtent {
+  return extent !== undefined && extent !== 'parent';
+}
+
+export function getNodeDimensions<NodeType extends NodeBase = NodeBase>(
+  node: NodeType
+): { width: number; height: number } {
+  return {
+    width: node.computed?.width ?? node.width ?? node.initialWidth ?? 0,
+    height: node.computed?.height ?? node.height ?? node.initialHeight ?? 0,
+  };
+}
+
+export function nodeHasDimensions<NodeType extends NodeBase = NodeBase>(node: NodeType): boolean {
+  return (
+    (node.computed?.width ?? node.width ?? node.initialWidth) !== undefined &&
+    (node.computed?.height ?? node.height ?? node.initialHeight) !== undefined
+  );
+}

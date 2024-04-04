@@ -4,31 +4,51 @@ import {
   SelectionMode,
   ConnectionMode,
   ConnectionLineType,
+  devWarn,
+  adoptUserProvidedNodes,
+  getNodesBounds,
+  getViewportForBounds,
+  updateConnectionLookup,
   type SelectionRect,
   type SnapGrid,
   type MarkerProps,
   type PanZoomInstance,
   type CoordinateExtent,
-  type IsValidConnection,
-  type GroupedEdges,
   type NodeOrigin,
   type OnError,
-  devWarn,
   type Viewport,
-  updateNodes,
-  getRectOfNodes,
-  getTransformForBounds
+  type ConnectionLookup,
+  type OnConnect,
+  type OnConnectStart,
+  type OnConnectEnd,
+  type NodeLookup,
+  type EdgeLookup
 } from '@xyflow/system';
 
 import DefaultNode from '$lib/components/nodes/DefaultNode.svelte';
 import InputNode from '$lib/components/nodes/InputNode.svelte';
 import OutputNode from '$lib/components/nodes/OutputNode.svelte';
 import GroupNode from '$lib/components/nodes/GroupNode.svelte';
-import BezierEdge from '$lib/components/edges/BezierEdge.svelte';
-import StraightEdge from '$lib/components/edges/StraightEdge.svelte';
-import SmoothStepEdge from '$lib/components/edges/SmoothStepEdge.svelte';
-import StepEdge from '$lib/components/edges/StepEdge.svelte';
-import type { NodeTypes, EdgeTypes, EdgeLayouted, Node, Edge, FitViewOptions } from '$lib/types';
+
+import {
+  BezierEdgeInternal,
+  SmoothStepEdgeInternal,
+  StraightEdgeInternal,
+  StepEdgeInternal
+} from '$lib/components/edges';
+
+import type {
+  NodeTypes,
+  EdgeTypes,
+  EdgeLayouted,
+  Node,
+  Edge,
+  FitViewOptions,
+  OnDelete,
+  OnEdgeCreate,
+  OnBeforeDelete,
+  IsValidConnection
+} from '$lib/types';
 import { createNodesStore, createEdgesStore } from './utils';
 import { initConnectionProps, type ConnectionProps } from './derived-connection-props';
 
@@ -40,10 +60,10 @@ export const initialNodeTypes = {
 };
 
 export const initialEdgeTypes = {
-  straight: StraightEdge,
-  smoothstep: SmoothStepEdge,
-  default: BezierEdge,
-  step: StepEdge
+  straight: StraightEdgeInternal,
+  smoothstep: SmoothStepEdgeInternal,
+  default: BezierEdgeInternal,
+  step: StepEdgeInternal
 };
 
 export const getInitialStore = ({
@@ -59,33 +79,41 @@ export const getInitialStore = ({
   height?: number;
   fitView?: boolean;
 }) => {
-  const nextNodes = updateNodes(nodes, [], { nodeOrigin: [0, 0], elevateNodesOnSelect: false });
+  const nodeLookup: NodeLookup = new Map();
+  const nextNodes = adoptUserProvidedNodes(nodes, nodeLookup, {
+    nodeOrigin: [0, 0],
+    elevateNodesOnSelect: false
+  });
+  const connectionLookup = new Map();
+  const edgeLookup = new Map();
+  updateConnectionLookup(connectionLookup, edgeLookup, edges);
 
   let viewport: Viewport = { x: 0, y: 0, zoom: 1 };
 
   if (fitView && width && height) {
-    const nodesWithDimensions = nextNodes.map((node) => ({
-      ...node,
-      width: node.size?.width,
-      height: node.size?.height
-    }));
-    const bounds = getRectOfNodes(nodesWithDimensions, [0, 0]);
-    const transform = getTransformForBounds(bounds, width, height, 0.5, 2, 0.1);
-    viewport = { x: transform[0], y: transform[1], zoom: transform[2] };
+    const nodesWithDimensions = nextNodes.filter(
+      (node) => (node.width && node.height) || (node.initialWidth && node.initialHeight)
+    );
+    // @todo users nodeOrigin should be used here
+    const bounds = getNodesBounds(nodesWithDimensions, { nodeOrigin: [0, 0] });
+    viewport = getViewportForBounds(bounds, width, height, 0.5, 2, 0.1);
   }
 
   return {
     flowId: writable<string | null>(null),
-    nodes: createNodesStore(nextNodes),
+    nodes: createNodesStore(nextNodes, nodeLookup),
+    nodeLookup: readable<NodeLookup<Node>>(nodeLookup),
+    edgeLookup: readable<EdgeLookup<Edge>>(edgeLookup),
     visibleNodes: readable<Node[]>([]),
-    edges: createEdgesStore(edges),
-    edgeTree: readable<GroupedEdges<EdgeLayouted>[]>([]),
+    edges: createEdgesStore(edges, connectionLookup, edgeLookup),
+    visibleEdges: readable<EdgeLayouted[]>([]),
+    connectionLookup: readable<ConnectionLookup>(connectionLookup),
     height: writable<number>(500),
     width: writable<number>(500),
     minZoom: writable<number>(0.5),
     maxZoom: writable<number>(2),
     nodeOrigin: writable<NodeOrigin>([0, 0]),
-    nodeDragThreshold: writable<number>(0),
+    nodeDragThreshold: writable<number>(1),
     nodeExtent: writable<CoordinateExtent>(infiniteExtent),
     translateExtent: writable<CoordinateExtent>(infiniteExtent),
     autoPanOnNodeDrag: writable<boolean>(true),
@@ -101,6 +129,7 @@ export const getInitialStore = ({
     multiselectionKeyPressed: writable<boolean>(false),
     deleteKeyPressed: writable<boolean>(false),
     panActivationKeyPressed: writable<boolean>(false),
+    zoomActivationKeyPressed: writable<boolean>(false),
     selectionRectMode: writable<string | null>(null),
     selectionMode: writable<SelectionMode>(SelectionMode.Partial),
     nodeTypes: writable<NodeTypes>(initialNodeTypes),
@@ -120,6 +149,16 @@ export const getInitialStore = ({
     defaultMarkerColor: writable<string>('#b1b1b7'),
     lib: readable<string>('svelte'),
     onlyRenderVisibleElements: writable<boolean>(false),
-    onError: writable<OnError>(devWarn)
+    onerror: writable<OnError>(devWarn),
+    ondelete: writable<OnDelete>(undefined),
+    onedgecreate: writable<OnEdgeCreate>(undefined),
+    onconnect: writable<OnConnect>(undefined),
+    onconnectstart: writable<OnConnectStart>(undefined),
+    onconnectend: writable<OnConnectEnd>(undefined),
+    onbeforedelete: writable<OnBeforeDelete>(undefined),
+    nodesInitialized: writable<boolean>(false),
+    edgesInitialized: writable<boolean>(false),
+    viewportInitialized: writable<boolean>(false),
+    initialized: readable<boolean>(false)
   };
 };

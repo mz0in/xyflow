@@ -1,13 +1,19 @@
 <script lang="ts" context="module">
-  declare const window: any;
-
+  declare const window: Window | undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getAttrFunction = (func: any): GetMiniMapNodeAttribute =>
     func instanceof Function ? func : () => func;
 </script>
 
 <script lang="ts">
   import cc from 'classcat';
-  import { getBoundsOfRects, getNodePositionWithOrigin, getRectOfNodes } from '@xyflow/system';
+  import {
+    getBoundsOfRects,
+    getNodeDimensions,
+    getNodePositionWithOrigin,
+    getNodesBounds,
+    nodeHasDimensions
+  } from '@xyflow/system';
 
   import { useStore } from '$lib/store';
   import { Panel } from '$lib/container/Panel';
@@ -20,7 +26,7 @@
   export let position: $$Props['position'] = 'bottom-right';
   export let ariaLabel: $$Props['ariaLabel'] = 'Mini map';
   export let nodeStrokeColor: $$Props['nodeStrokeColor'] = 'transparent';
-  export let nodeColor: $$Props['nodeColor'] = '#e2e2e2';
+  export let nodeColor: $$Props['nodeColor'] = undefined;
   export let nodeClass: $$Props['nodeClass'] = '';
   export let nodeBorderRadius: $$Props['nodeBorderRadius'] = 5;
   export let nodeStrokeWidth: $$Props['nodeStrokeWidth'] = 2;
@@ -51,10 +57,11 @@
     translateExtent
   } = useStore();
 
-  const nodeColorFunc = getAttrFunction(nodeColor);
+  const nodeColorFunc = nodeColor === undefined ? undefined : getAttrFunction(nodeColor);
   const nodeStrokeColorFunc = getAttrFunction(nodeStrokeColor);
   const nodeClassFunc = getAttrFunction(nodeClass);
   const shapeRendering =
+    // @ts-expect-error - TS doesn't know about chrome
     typeof window === 'undefined' || !!window.chrome ? 'crispEdges' : 'geometricPrecision';
   const labelledBy = `svelte-flow__minimap-desc-${$flowId}`;
 
@@ -64,7 +71,7 @@
     width: $containerWidth / $viewport.zoom,
     height: $containerHeight / $viewport.zoom
   };
-  $: boundingRect = $nodes.length > 0 ? getBoundsOfRects(getRectOfNodes($nodes), viewBB) : viewBB;
+  $: boundingRect = $nodes.length > 0 ? getBoundsOfRects(getNodesBounds($nodes), viewBB) : viewBB;
   $: elementWidth = width ?? defaultWidth;
   $: elementHeight = height ?? defaultHeight;
   $: scaledWidth = boundingRect.width / elementWidth;
@@ -83,7 +90,7 @@
 
 <Panel
   {position}
-  {style}
+  style={style + (bgColor ? `;--xy-minimap-background-color-props:${bgColor}` : '')}
   class={cc(['svelte-flow__minimap', className])}
   data-testid="svelte-flow__minimap"
 >
@@ -92,12 +99,14 @@
       width={elementWidth}
       height={elementHeight}
       viewBox="{x} {y} {viewboxWidth} {viewboxHeight}"
+      class="svelte-flow__minimap-svg"
       role="img"
       aria-labelledby={labelledBy}
-      style:--minimap-background-color-props={bgColor}
-      style:--minimap-mask-color-props={maskColor}
-      style:--minimap-mask-stroke-color-props={maskStrokeColor}
-      style:--minimap-mask-stroke-width-props={maskStrokeWidth}
+      style:--xy-minimap-mask-background-color-props={maskColor}
+      style:--xy-minimap-mask-stroke-color-props={maskStrokeColor}
+      style:--xy-minimap-mask-stroke-width-props={maskStrokeWidth
+        ? maskStrokeWidth * viewScale
+        : undefined}
       use:interactive={{
         panZoom: $panZoom,
         viewport,
@@ -114,15 +123,15 @@
       {#if ariaLabel}<title id={labelledBy}>{ariaLabel}</title>{/if}
 
       {#each $nodes as node (node.id)}
-        {#if node.width && node.height}
+        {#if nodeHasDimensions(node)}
           {@const pos = getNodePositionWithOrigin(node).positionAbsolute}
+          {@const nodeDimesions = getNodeDimensions(node)}
           <MinimapNode
             x={pos.x}
             y={pos.y}
-            width={node.width}
-            height={node.height}
+            {...nodeDimesions}
             selected={node.selected}
-            color={nodeColorFunc(node)}
+            color={nodeColorFunc?.(node)}
             borderRadius={nodeBorderRadius}
             strokeColor={nodeStrokeColorFunc(node)}
             strokeWidth={nodeStrokeWidth}
@@ -142,27 +151,3 @@
     </svg>
   {/if}
 </Panel>
-
-<style>
-  svg {
-    background-color: var(
-      --minimap-background-color-props,
-      var(--minimap-background-color, var(--minimap-background-color-default))
-    );
-  }
-
-  .svelte-flow__minimap-mask {
-    fill: var(
-      --minimap-mask-color-props,
-      var(--minimap-mask-color, var(--minimap-mask-color-default))
-    );
-    stroke: var(
-      --minimap-mask-stroke-color-props,
-      var(--minimap-mask-stroke-color, var(--minimap-mask-stroke-color-default))
-    );
-    stroke-width: var(
-      --minimap-mask-stroke-width-props,
-      var(--minimap-mask-stroke-width, var(--minimap-mask-stroke-width-default))
-    );
-  }
-</style>

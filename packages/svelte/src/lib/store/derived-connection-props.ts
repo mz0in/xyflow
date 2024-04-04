@@ -6,7 +6,8 @@ import {
   ConnectionLineType,
   ConnectionMode,
   Position,
-  internalsSymbol
+  internalsSymbol,
+  type HandleElement
 } from '@xyflow/system';
 
 import type { SvelteFlowStoreState } from './types';
@@ -56,34 +57,36 @@ export function getDerivedConnectionProps(
       currentConnection,
       store.connectionLineType,
       store.connectionMode,
-      store.nodes,
+      store.nodeLookup,
       store.viewport
     ],
-    ([connection, connectionLineType, connectionMode, nodes, viewport]) => {
+    ([connection, connectionLineType, connectionMode, nodeLookup, viewport]) => {
       if (!connection.connectionStartHandle?.nodeId) {
         return initConnectionProps;
       }
 
-      const fromNode = nodes.find((n) => n.id === connection.connectionStartHandle?.nodeId);
+      const fromNode = nodeLookup.get(connection.connectionStartHandle?.nodeId);
       const fromHandleBounds = fromNode?.[internalsSymbol]?.handleBounds;
       const handleBoundsStrict =
         fromHandleBounds?.[connection.connectionStartHandle.type || 'source'] || [];
-      const handleBoundsLoose = handleBoundsStrict
+      const handleBoundsLoose: HandleElement[] | undefined | null = handleBoundsStrict
         ? handleBoundsStrict
         : fromHandleBounds?.[
             connection?.connectionStartHandle?.type === 'source' ? 'target' : 'source'
-          ]!;
+          ];
       const handleBounds =
         connectionMode === ConnectionMode.Strict ? handleBoundsStrict : handleBoundsLoose;
       const fromHandle = connection.connectionStartHandle?.handleId
-        ? handleBounds.find((d) => d.id === connection.connectionStartHandle?.handleId)
-        : handleBounds[0];
+        ? handleBounds?.find((d) => d.id === connection.connectionStartHandle?.handleId)
+        : handleBounds?.[0];
       const fromHandleX = fromHandle
         ? fromHandle.x + fromHandle.width / 2
-        : (fromNode?.width ?? 0) / 2;
-      const fromHandleY = fromHandle ? fromHandle.y + fromHandle.height / 2 : fromNode?.height ?? 0;
-      const fromX = (fromNode?.positionAbsolute?.x ?? 0) + fromHandleX;
-      const fromY = (fromNode?.positionAbsolute?.y ?? 0) + fromHandleY;
+        : (fromNode?.computed?.width ?? 0) / 2;
+      const fromHandleY = fromHandle
+        ? fromHandle.y + fromHandle.height / 2
+        : fromNode?.computed?.height ?? 0;
+      const fromX = (fromNode?.computed?.positionAbsolute?.x ?? 0) + fromHandleX;
+      const fromY = (fromNode?.computed?.positionAbsolute?.y ?? 0) + fromHandleY;
       const fromPosition = fromHandle?.position;
       const toPosition = fromPosition ? oppositePosition[fromPosition] : undefined;
 

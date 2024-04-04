@@ -1,114 +1,161 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   getElementsToRemove,
-  getIncomersBase,
-  getOutgoersBase,
   getOverlappingArea,
   isRectObject,
+  nodeHasDimensions,
   nodeToRect,
   type Rect,
 } from '@xyflow/system';
 
 import useViewportHelper from './useViewportHelper';
-import { useStoreApi } from '../hooks/useStore';
-import type {
-  ReactFlowInstance,
-  Instance,
-  NodeAddChange,
-  EdgeAddChange,
-  NodeResetChange,
-  EdgeResetChange,
-  NodeRemoveChange,
-  EdgeRemoveChange,
-  NodeChange,
-  Node,
-  Edge,
-} from '../types';
+import { useStoreApi } from './useStore';
+import type { ReactFlowInstance, Instance, Node, Edge } from '../types';
+import { getElementsDiffChanges, isNode } from '../utils';
+import { useIsomorphicLayoutEffect } from './useIsomorphicLayoutEffect';
 
-/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-export default function useReactFlow<NodeData = any, EdgeData = any>(): ReactFlowInstance<NodeData, EdgeData> {
+/**
+ * Hook for accessing the ReactFlow instance.
+ *
+ * @public
+ * @returns ReactFlowInstance
+ */
+export function useReactFlow<NodeType extends Node = Node, EdgeType extends Edge = Edge>(): ReactFlowInstance<
+  NodeType,
+  EdgeType
+> {
   const viewportHelper = useViewportHelper();
   const store = useStoreApi();
 
-  const getNodes = useCallback<Instance.GetNodes<NodeData>>(() => {
-    return store.getState().nodes.map((n) => ({ ...n }));
+  const getNodes = useCallback<Instance.GetNodes<NodeType>>(() => {
+    return store.getState().nodes.map((n) => ({ ...n })) as NodeType[];
   }, []);
 
-  const getNode = useCallback<Instance.GetNode<NodeData>>((id) => {
-    return store.getState().nodes.find((n) => n.id === id);
+  const getNode = useCallback<Instance.GetNode<NodeType>>((id) => {
+    return store.getState().nodeLookup.get(id) as NodeType;
   }, []);
 
-  const getEdges = useCallback<Instance.GetEdges<EdgeData>>(() => {
+  const getEdges = useCallback<Instance.GetEdges<EdgeType>>(() => {
     const { edges = [] } = store.getState();
-    return edges.map((e) => ({ ...e }));
+    return edges.map((e) => ({ ...e })) as EdgeType[];
   }, []);
 
-  const getEdge = useCallback<Instance.GetEdge<EdgeData>>((id) => {
+  const getEdge = useCallback<Instance.GetEdge<EdgeType>>((id) => {
     const { edges = [] } = store.getState();
-    return edges.find((e) => e.id === id);
+    return edges.find((e) => e.id === id) as EdgeType;
   }, []);
 
-  const setNodes = useCallback<Instance.SetNodes<NodeData>>((payload) => {
-    const { nodes, setNodes, hasDefaultNodes, onNodesChange } = store.getState();
-    const nextNodes = typeof payload === 'function' ? payload(nodes) : payload;
+  type SetElementsQueue = {
+    nodes: (NodeType[] | ((nodes: NodeType[]) => NodeType[]))[];
+    edges: (EdgeType[] | ((edges: EdgeType[]) => EdgeType[]))[];
+  };
 
-    if (hasDefaultNodes) {
-      setNodes(nextNodes);
-    } else if (onNodesChange) {
-      const changes =
-        nextNodes.length === 0
-          ? nodes.map((node) => ({ type: 'remove', id: node.id } as NodeRemoveChange))
-          : nextNodes.map((node) => ({ item: node, type: 'reset' } as NodeResetChange<NodeData>));
-      onNodesChange(changes);
+  // A reference of all the batched updates to process before the next render. We
+  // want a mutable reference here so multiple synchronous calls to `setNodes` etc
+  // can be batched together.
+  const setElementsQueue = useRef<SetElementsQueue>({ nodes: [], edges: [] });
+  // Because we're using a ref above, we need some way to let React know when to
+  // actually process the queue. We flip this bit of state to `true` any time we
+  // mutate the queue and then flip it back to `false` after flushing the queue.
+  const [shouldFlushQueue, setShouldFlushQueue] = useState(false);
+
+  // Layout effects are guaranteed to run before the next render which means we
+  // shouldn't run into any issues with stale state or weird issues that come from
+  // rendering things one frame later than expected (we used to use `setTimeout`).
+  useIsomorphicLayoutEffect(() => {
+    // Because we need to flip the state back to false after flushing, this should
+    // trigger the hook again (!). If the hook is being run again we know that any
+    // updates should have been processed by now and we can safely clear the queue
+    // and bail early.
+    if (!shouldFlushQueue) {
+      setElementsQueue.current = { nodes: [], edges: [] };
+      return;
     }
-  }, []);
 
-  const setEdges = useCallback<Instance.SetEdges<EdgeData>>((payload) => {
-    const { edges = [], setEdges, hasDefaultEdges, onEdgesChange } = store.getState();
-    const nextEdges = typeof payload === 'function' ? payload(edges) : payload;
+    if (setElementsQueue.current.nodes.length) {
+      const { nodes = [], setNodes, hasDefaultNodes, onNodesChange, nodeLookup } = store.getState();
 
-    if (hasDefaultEdges) {
-      setEdges(nextEdges);
-    } else if (onEdgesChange) {
-      const changes =
-        nextEdges.length === 0
-          ? edges.map((edge) => ({ type: 'remove', id: edge.id } as EdgeRemoveChange))
-          : nextEdges.map((edge) => ({ item: edge, type: 'reset' } as EdgeResetChange<EdgeData>));
-      onEdgesChange(changes);
+      // This is essentially an `Array.reduce` in imperative clothing. Processing
+      // this queue is a relatively hot path so we'd like to avoid the overhead of
+      // array methods where we can.
+      let next = nodes as NodeType[];
+      for (const payload of setElementsQueue.current.nodes) {
+        next = typeof payload === 'function' ? payload(next) : payload;
+      }
+
+      if (hasDefaultNodes) {
+        setNodes(next);
+      } else if (onNodesChange) {
+        onNodesChange(
+          getElementsDiffChanges({
+            items: next,
+            lookup: nodeLookup,
+          })
+        );
+      }
+
+      setElementsQueue.current.nodes = [];
     }
-  }, []);
 
-  const addNodes = useCallback<Instance.AddNodes<NodeData>>((payload) => {
-    const nodes = Array.isArray(payload) ? payload : [payload];
-    const { nodes: currentNodes, hasDefaultNodes, onNodesChange, setNodes } = store.getState();
+    if (setElementsQueue.current.edges.length) {
+      const { edges = [], setEdges, hasDefaultEdges, onEdgesChange, edgeLookup } = store.getState();
 
-    if (hasDefaultNodes) {
-      const nextNodes = [...currentNodes, ...nodes];
-      setNodes(nextNodes);
-    } else if (onNodesChange) {
-      const changes = nodes.map((node) => ({ item: node, type: 'add' } as NodeAddChange<NodeData>));
-      onNodesChange(changes);
+      let next = edges as EdgeType[];
+      for (const payload of setElementsQueue.current.edges) {
+        next = typeof payload === 'function' ? payload(next) : payload;
+      }
+
+      if (hasDefaultEdges) {
+        setEdges(next);
+      } else if (onEdgesChange) {
+        onEdgesChange(
+          getElementsDiffChanges({
+            items: next,
+            lookup: edgeLookup,
+          })
+        );
+      }
+
+      setElementsQueue.current.edges = [];
     }
+
+    // Beacuse we're using reactive state to trigger this effect, we need to flip
+    // it back to false.
+    setShouldFlushQueue(false);
+  }, [shouldFlushQueue]);
+
+  const setNodes = useCallback<Instance.SetNodes<NodeType>>((payload) => {
+    setElementsQueue.current.nodes.push(payload);
+    setShouldFlushQueue(true);
   }, []);
 
-  const addEdges = useCallback<Instance.AddEdges<EdgeData>>((payload) => {
-    const nextEdges = Array.isArray(payload) ? payload : [payload];
-    const { edges = [], setEdges, hasDefaultEdges, onEdgesChange } = store.getState();
-
-    if (hasDefaultEdges) {
-      setEdges([...edges, ...nextEdges]);
-    } else if (onEdgesChange) {
-      const changes = nextEdges.map((edge) => ({ item: edge, type: 'add' } as EdgeAddChange<EdgeData>));
-      onEdgesChange(changes);
-    }
+  const setEdges = useCallback<Instance.SetEdges<EdgeType>>((payload) => {
+    setElementsQueue.current.edges.push(payload);
+    setShouldFlushQueue(true);
   }, []);
 
-  const toObject = useCallback<Instance.ToObject<NodeData, EdgeData>>(() => {
+  const addNodes = useCallback<Instance.AddNodes<NodeType>>((payload) => {
+    const newNodes = Array.isArray(payload) ? payload : [payload];
+
+    // Queueing a functional update means that we won't worry about other calls
+    // to `setNodes` that might happen elsewhere.
+    setElementsQueue.current.nodes.push((nodes) => [...nodes, ...newNodes]);
+    setShouldFlushQueue(true);
+  }, []);
+
+  const addEdges = useCallback<Instance.AddEdges<EdgeType>>((payload) => {
+    const newEdges = Array.isArray(payload) ? payload : [payload];
+
+    setElementsQueue.current.edges.push((edges) => [...edges, ...newEdges]);
+    setShouldFlushQueue(true);
+  }, []);
+
+  const toObject = useCallback<Instance.ToObject<NodeType, EdgeType>>(() => {
     const { nodes = [], edges = [], transform } = store.getState();
     const [x, y, zoom] = transform;
     return {
-      nodes: nodes.map((n) => ({ ...n })),
-      edges: edges.map((e) => ({ ...e })),
+      nodes: nodes.map((n) => ({ ...n })) as NodeType[],
+      edges: edges.map((e) => ({ ...e })) as EdgeType[],
       viewport: {
         x,
         y,
@@ -117,93 +164,85 @@ export default function useReactFlow<NodeData = any, EdgeData = any>(): ReactFlo
     };
   }, []);
 
-  const deleteElements = useCallback<Instance.DeleteElements>(({ nodes: nodesDeleted, edges: edgesDeleted }) => {
-    const {
-      nodes,
-      edges,
-      hasDefaultNodes,
-      hasDefaultEdges,
-      onNodesDelete,
-      onEdgesDelete,
-      onNodesChange,
-      onEdgesChange,
-    } = store.getState();
-    const { matchingNodes, matchingEdges } = getElementsToRemove<Node, Edge>({
-      nodesToRemove: nodesDeleted || [],
-      edgesToRemove: edgesDeleted || [],
-      nodes,
-      edges,
-    });
+  const deleteElements = useCallback<Instance.DeleteElements>(
+    async ({ nodes: nodesToRemove = [], edges: edgesToRemove = [] }) => {
+      const {
+        nodes,
+        edges,
+        hasDefaultNodes,
+        hasDefaultEdges,
+        onNodesDelete,
+        onEdgesDelete,
+        onNodesChange,
+        onEdgesChange,
+        onDelete,
+        onBeforeDelete,
+      } = store.getState();
+      const { nodes: matchingNodes, edges: matchingEdges } = await getElementsToRemove({
+        nodesToRemove,
+        edgesToRemove,
+        nodes,
+        edges,
+        onBeforeDelete,
+      });
 
-    if (matchingNodes.length || matchingEdges.length) {
-      if (hasDefaultEdges || hasDefaultNodes) {
+      const hasMatchingEdges = matchingEdges.length > 0;
+      const hasMatchingNodes = matchingNodes.length > 0;
+
+      if (hasMatchingEdges) {
         if (hasDefaultEdges) {
-          store.setState({
-            edges: edges.filter((e) => !matchingEdges.some((mE) => mE.id === e.id)),
-          });
+          const nextEdges = edges.filter((e) => !matchingEdges.some((mE) => mE.id === e.id));
+          store.getState().setEdges(nextEdges);
         }
 
-        if (hasDefaultNodes) {
-          store.setState({
-            nodes: nodes.filter((n) => !matchingNodes.some((mN) => mN.id === n.id)),
-          });
-        }
-      }
-
-      if (matchingEdges.length > 0) {
         onEdgesDelete?.(matchingEdges);
+        onEdgesChange?.(
+          matchingEdges.map((edge) => ({
+            id: edge.id,
+            type: 'remove',
+          }))
+        );
+      }
 
-        if (onEdgesChange) {
-          onEdgesChange(
-            matchingEdges.map((edge) => ({
-              id: edge.id,
-              type: 'remove',
-            }))
-          );
+      if (hasMatchingNodes) {
+        if (hasDefaultNodes) {
+          const nextNodes = nodes.filter((n) => !matchingNodes.some((mN) => mN.id === n.id));
+          store.getState().setNodes(nextNodes);
         }
+
+        onNodesDelete?.(matchingNodes);
+        onNodesChange?.(matchingNodes.map((node) => ({ id: node.id, type: 'remove' })));
       }
 
-      if (matchingNodes.length > 0) {
-        onNodesDelete?.(matchingNodes as Node[]);
-
-        if (onNodesChange) {
-          const nodeChanges: NodeChange[] = matchingNodes.map((node) => ({ id: node.id, type: 'remove' }));
-          onNodesChange(nodeChanges);
-        }
-      }
-    }
-
-    return { deletedNodes: matchingNodes, deletedEdges: matchingEdges };
-  }, []);
-
-  const getNodeRect = useCallback(
-    (
-      nodeOrRect: Node<NodeData> | { id: Node['id'] } | Rect
-    ): [Rect | null, Node<NodeData> | null | undefined, boolean] => {
-      const isRect = isRectObject(nodeOrRect);
-      const node = isRect ? null : store.getState().nodes.find((n) => n.id === nodeOrRect.id);
-
-      if (!isRect && !node) {
-        [null, null, isRect];
+      if (hasMatchingNodes || hasMatchingEdges) {
+        onDelete?.({ nodes: matchingNodes, edges: matchingEdges });
       }
 
-      const nodeRect = isRect ? nodeOrRect : nodeToRect(node!);
-
-      return [nodeRect, node, isRect];
+      return { deletedNodes: matchingNodes, deletedEdges: matchingEdges };
     },
     []
   );
 
-  const getIntersectingNodes = useCallback<Instance.GetIntersectingNodes<NodeData>>(
+  const getNodeRect = useCallback((nodeOrRect: NodeType | { id: NodeType['id'] }): Rect | null => {
+    const node =
+      isNode(nodeOrRect) && nodeHasDimensions(nodeOrRect)
+        ? nodeOrRect
+        : (store.getState().nodeLookup.get(nodeOrRect.id) as NodeType);
+
+    return node ? nodeToRect(node) : null;
+  }, []);
+
+  const getIntersectingNodes = useCallback<Instance.GetIntersectingNodes<NodeType>>(
     (nodeOrRect, partially = true, nodes) => {
-      const [nodeRect, node, isRect] = getNodeRect(nodeOrRect);
+      const isRect = isRectObject(nodeOrRect);
+      const nodeRect = isRect ? nodeOrRect : getNodeRect(nodeOrRect);
 
       if (!nodeRect) {
         return [];
       }
 
       return (nodes || store.getState().nodes).filter((n) => {
-        if (!isRect && (n.id === node!.id || !n.positionAbsolute)) {
+        if (!isRect && (n.id === nodeOrRect!.id || !n.computed?.positionAbsolute)) {
           return false;
         }
 
@@ -212,14 +251,15 @@ export default function useReactFlow<NodeData = any, EdgeData = any>(): ReactFlo
         const partiallyVisible = partially && overlappingArea > 0;
 
         return partiallyVisible || overlappingArea >= nodeRect.width * nodeRect.height;
-      });
+      }) as NodeType[];
     },
     []
   );
 
-  const isNodeIntersecting = useCallback<Instance.IsNodeIntersecting<NodeData>>(
+  const isNodeIntersecting = useCallback<Instance.IsNodeIntersecting<NodeType>>(
     (nodeOrRect, area, partially = true) => {
-      const [nodeRect] = getNodeRect(nodeOrRect);
+      const isRect = isRectObject(nodeOrRect);
+      const nodeRect = isRect ? nodeOrRect : getNodeRect(nodeOrRect);
 
       if (!nodeRect) {
         return false;
@@ -233,40 +273,35 @@ export default function useReactFlow<NodeData = any, EdgeData = any>(): ReactFlo
     []
   );
 
-  const getConnectedEdges = useCallback<Instance.getConnectedEdges>((node) => {
-    const { edges } = store.getState();
+  const updateNode = useCallback<Instance.UpdateNode<NodeType>>(
+    (id, nodeUpdate, options = { replace: true }) => {
+      setNodes((prevNodes) =>
+        prevNodes.map((node) => {
+          if (node.id === id) {
+            const nextNode = typeof nodeUpdate === 'function' ? nodeUpdate(node as NodeType) : nodeUpdate;
+            return options.replace && isNode(nextNode) ? (nextNode as NodeType) : { ...node, ...nextNode };
+          }
 
-    const nodeIds = new Set();
-    if (typeof node === 'string') {
-      nodeIds.add(node);
-    } else if (node.length >= 1) {
-      node.forEach((n) => {
-        nodeIds.add(n.id);
-      });
-    }
+          return node;
+        })
+      );
+    },
+    [setNodes]
+  );
 
-    return edges.filter((edge) => nodeIds.has(edge.source) || nodeIds.has(edge.target));
-  }, []);
-
-  const getIncomers = useCallback<Instance.getIncomers>((node) => {
-    const { nodes, edges } = store.getState();
-
-    if (typeof node === 'string') {
-      return getIncomersBase({ id: node }, nodes, edges);
-    }
-
-    return getIncomersBase(node, nodes, edges);
-  }, []);
-
-  const getOutgoers = useCallback<Instance.getOutgoers>((node) => {
-    const { nodes, edges } = store.getState();
-
-    if (typeof node == 'string') {
-      return getOutgoersBase({ id: node }, nodes, edges);
-    }
-
-    return getOutgoersBase(node, nodes, edges);
-  }, []);
+  const updateNodeData = useCallback<Instance.UpdateNodeData<NodeType>>(
+    (id, dataUpdate, options = { replace: false }) => {
+      updateNode(
+        id,
+        (node) => {
+          const nextData = typeof dataUpdate === 'function' ? dataUpdate(node) : dataUpdate;
+          return options.replace ? { ...node, data: nextData } : { ...node, data: { ...node.data, ...nextData } };
+        },
+        options
+      );
+    },
+    [updateNode]
+  );
 
   return useMemo(() => {
     return {
@@ -283,9 +318,8 @@ export default function useReactFlow<NodeData = any, EdgeData = any>(): ReactFlo
       deleteElements,
       getIntersectingNodes,
       isNodeIntersecting,
-      getConnectedEdges,
-      getIncomers,
-      getOutgoers,
+      updateNode,
+      updateNodeData,
     };
   }, [
     viewportHelper,
@@ -301,8 +335,7 @@ export default function useReactFlow<NodeData = any, EdgeData = any>(): ReactFlo
     deleteElements,
     getIntersectingNodes,
     isNodeIntersecting,
-    getConnectedEdges,
-    getIncomers,
-    getOutgoers,
+    updateNode,
+    updateNodeData,
   ]);
 }

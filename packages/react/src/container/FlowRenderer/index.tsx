@@ -1,16 +1,16 @@
 import { memo, type ReactNode } from 'react';
 
 import { useStore } from '../../hooks/useStore';
-import useGlobalKeyHandler from '../../hooks/useGlobalKeyHandler';
-import useKeyPress from '../../hooks/useKeyPress';
+import { useGlobalKeyHandler } from '../../hooks/useGlobalKeyHandler';
+import { useKeyPress } from '../../hooks/useKeyPress';
 import { GraphViewProps } from '../GraphView';
-import ZoomPane from '../ZoomPane';
-import Pane from '../Pane';
-import NodesSelection from '../../components/NodesSelection';
-import type { ReactFlowState } from '../../types';
+import { ZoomPane } from '../ZoomPane';
+import { Pane } from '../Pane';
+import { NodesSelection } from '../../components/NodesSelection';
+import type { ReactFlowState, Node } from '../../types';
 
-export type FlowRendererProps = Omit<
-  GraphViewProps,
+export type FlowRendererProps<NodeType extends Node = Node> = Omit<
+  GraphViewProps<NodeType>,
   | 'snapToGrid'
   | 'nodeTypes'
   | 'edgeTypes'
@@ -28,9 +28,11 @@ export type FlowRendererProps = Omit<
   children: ReactNode;
 };
 
-const selector = (s: ReactFlowState) => s.nodesSelectionActive;
+const selector = (s: ReactFlowState) => {
+  return { nodesSelectionActive: s.nodesSelectionActive, userSelectionActive: s.userSelectionActive };
+};
 
-const FlowRenderer = ({
+function FlowRendererComponent<NodeType extends Node = Node>({
   children,
   onPaneClick,
   onPaneMouseEnter,
@@ -50,7 +52,7 @@ const FlowRenderer = ({
   elementsSelectable,
   zoomOnScroll,
   zoomOnPinch,
-  panOnScroll,
+  panOnScroll: _panOnScroll,
   panOnScrollSpeed,
   panOnScrollMode,
   zoomOnDoubleClick,
@@ -66,13 +68,14 @@ const FlowRenderer = ({
   disableKeyboardA11y,
   onViewportChange,
   isControlledViewport,
-}: FlowRendererProps) => {
-  const nodesSelectionActive = useStore(selector);
+}: FlowRendererProps<NodeType>) {
+  const { nodesSelectionActive, userSelectionActive } = useStore(selector);
   const selectionKeyPressed = useKeyPress(selectionKeyCode);
   const panActivationKeyPressed = useKeyPress(panActivationKeyCode);
 
   const panOnDrag = panActivationKeyPressed || _panOnDrag;
-  const isSelecting = selectionKeyPressed || (selectionOnDrag && panOnDrag !== true);
+  const panOnScroll = panActivationKeyPressed || _panOnScroll;
+  const isSelecting = selectionKeyPressed || userSelectionActive || (selectionOnDrag && panOnDrag !== true);
 
   useGlobalKeyHandler({ deleteKeyCode, multiSelectionKeyCode });
 
@@ -122,8 +125,8 @@ const FlowRenderer = ({
       </Pane>
     </ZoomPane>
   );
-};
+}
 
-FlowRenderer.displayName = 'FlowRenderer';
+FlowRendererComponent.displayName = 'FlowRenderer';
 
-export default memo(FlowRenderer);
+export const FlowRenderer = memo(FlowRendererComponent) as typeof FlowRendererComponent;

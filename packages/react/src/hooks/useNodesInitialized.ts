@@ -12,19 +12,30 @@ const selector = (options: UseNodesInitializedOptions) => (s: ReactFlowState) =>
     return false;
   }
 
-  return s.nodes
-    .filter((n) => (options.includeHiddenNodes ? true : !n.hidden))
-    .every((n) => n[internalsSymbol]?.handleBounds !== undefined);
+  for (const node of s.nodes) {
+    if (options.includeHiddenNodes || !node.hidden) {
+      if (node[internalsSymbol]?.handleBounds === undefined) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 };
 
 const defaultOptions = {
   includeHiddenNodes: false,
 };
 
-function useNodesInitialized(options: UseNodesInitializedOptions = defaultOptions): boolean {
+/**
+ * Hook which returns true when all nodes are initialized.
+ *
+ * @public
+ * @param options.includeHiddenNodes - defaults to false
+ * @returns boolean indicating whether all nodes are initialized
+ */
+export function useNodesInitialized(options: UseNodesInitializedOptions = defaultOptions): boolean {
   const initialized = useStore(selector(options));
 
   return initialized;
 }
-
-export default useNodesInitialized;

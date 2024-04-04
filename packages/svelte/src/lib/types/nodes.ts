@@ -1,19 +1,39 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import type { ComponentType, SvelteComponent } from 'svelte';
-import type { NodeBase, NodeProps } from '@xyflow/system';
+import type { NodeBase, NodeProps as NodePropsBase } from '@xyflow/system';
 
-// @todo: currently the helper function only like Node from '@reactflow/core'
-// we need a base node type or helpes that accept Node like types
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+/**
+ * The node data structure that gets used for the nodes prop.
+ * @public
+ */
 export type Node<
-  NodeData = any,
-  NodeType extends string | undefined = string | undefined
+  NodeData extends Record<string, unknown> = Record<string, unknown>,
+  NodeType extends string = string
 > = NodeBase<NodeData, NodeType> & {
   class?: string;
   style?: string;
 };
 
-export type NodeTypes = Record<string, ComponentType<SvelteComponent<NodeProps>>>;
+// @todo: currently generics for nodes are not really supported
+// let's fix `type: any` when we migrate to Svelte 5
+export type NodeProps<NodeType extends Node = Node> = NodePropsBase<NodeType> & {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type: any;
+};
+
+export type NodeTypes = Record<
+  string,
+  ComponentType<
+    SvelteComponent<
+      NodeProps & {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        type: any;
+      }
+    >
+  >
+>;
 
 export type DefaultNodeOptions = Partial<Omit<Node, 'id'>>;
+
+export type BuiltInNode = Node<{ label: string }, 'input' | 'output' | 'default'>;

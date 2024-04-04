@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { internalsSymbol, getPositionWithOrigin } from '@xyflow/system';
+  import {
+    internalsSymbol,
+    getPositionWithOrigin,
+    getNodeDimensions,
+    nodeHasDimensions
+  } from '@xyflow/system';
 
   import { NodeWrapper } from '$lib/components/NodeWrapper';
   import { useStore } from '$lib/store';
@@ -17,11 +22,18 @@
     typeof ResizeObserver === 'undefined'
       ? null
       : new ResizeObserver((entries: ResizeObserverEntry[]) => {
-          const updates = entries.map((entry: ResizeObserverEntry) => ({
-            id: entry.target.getAttribute('data-id') as string,
-            nodeElement: entry.target as HTMLDivElement,
-            forceUpdate: true
-          }));
+          const updates = new Map();
+
+          entries.forEach((entry: ResizeObserverEntry) => {
+            const id = entry.target.getAttribute('data-id') as string;
+
+            updates.set(id, {
+              id,
+              nodeElement: entry.target as HTMLDivElement,
+              forceUpdate: true
+            });
+          });
+
           updateNodeDimensions(updates);
         });
 
@@ -32,11 +44,11 @@
 
 <div class="svelte-flow__nodes">
   {#each $visibleNodes as node (node.id)}
+    {@const nodeDimesions = getNodeDimensions(node)}
     {@const posOrigin = getPositionWithOrigin({
-      x: node.positionAbsolute?.x ?? 0,
-      y: node.positionAbsolute?.y ?? 0,
-      width: (node.size?.width || node.width) ?? 0,
-      height: (node.size?.height || node.height) ?? 0,
+      x: node.computed?.positionAbsolute?.x ?? 0,
+      y: node.computed?.positionAbsolute?.y ?? 0,
+      ...nodeDimesions,
       origin: node.origin
     })}
     <NodeWrapper
@@ -54,26 +66,31 @@
         node.connectable ||
         ($nodesConnectable && typeof node.connectable === 'undefined')
       )}
-      positionAbsolute={node.positionAbsolute}
-      positionOrigin={posOrigin}
+      positionX={node.computed?.positionAbsolute?.x ?? 0}
+      positionY={node.computed?.positionAbsolute?.y ?? 0}
+      positionOriginX={posOrigin.x ?? 0}
+      positionOriginY={posOrigin.y ?? 0}
       isParent={!!node[internalsSymbol]?.isParent}
       style={node.style}
       class={node.class}
-      type={node.type}
+      type={node.type ?? 'default'}
       sourcePosition={node.sourcePosition}
       targetPosition={node.targetPosition}
       dragging={node.dragging}
       zIndex={node[internalsSymbol]?.z ?? 0}
       dragHandle={node.dragHandle}
-      initialized={(!!node.width && !!node.height) || (!!node.size?.width && !!node.size?.height)}
+      initialized={nodeHasDimensions(node)}
+      width={node.width}
+      height={node.height}
+      initialWidth={node.initialWidth}
+      initialHeight={node.initialHeight}
+      computedWidth={node.computed?.width}
+      computedHeight={node.computed?.height}
       {resizeObserver}
       on:nodeclick
       on:nodemouseenter
       on:nodemousemove
       on:nodemouseleave
-      on:connectstart
-      on:connect
-      on:connectend
       on:nodedrag
       on:nodedragstart
       on:nodedragstop

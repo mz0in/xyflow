@@ -30,16 +30,21 @@
 
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import { SelectionMode, getEventPosition, getNodesInside } from '@xyflow/system';
+  import {
+    SelectionMode,
+    getEventPosition,
+    getNodesInside,
+    getConnectedEdges
+  } from '@xyflow/system';
 
   import { useStore } from '$lib/store';
-  import { getConnectedEdges } from '$lib/utils';
   import type { Node, Edge } from '$lib/types';
   import type { PaneProps } from './types';
 
   type $$Props = PaneProps;
 
   export let panOnDrag: $$Props['panOnDrag'] = undefined;
+  export let selectionOnDrag: $$Props['selectionOnDrag'] = undefined;
 
   const dispatch = createEventDispatcher<{
     paneclick: {
@@ -67,9 +72,10 @@
   let containerBounds: DOMRect | null = null;
   let selectedNodes: Node[] = [];
 
-  $: isSelecting = $selectionKeyPressed;
-  $: hasActiveSelection = $elementsSelectable && (isSelecting || $selectionRectMode === 'user');
   $: _panOnDrag = $panActivationKeyPressed || panOnDrag;
+  $: isSelecting =
+    $selectionKeyPressed || $selectionRect || (selectionOnDrag && _panOnDrag !== true);
+  $: hasActiveSelection = $elementsSelectable && (isSelecting || $selectionRectMode === 'user');
 
   function onClick(event: MouseEvent | TouchEvent) {
     dispatch('paneclick', { event });
@@ -172,7 +178,7 @@
     // onSelectionEnd?.(event);
   }
 
-  const onMouseLeave = (event: MouseEvent) => {
+  const onMouseLeave = () => {
     if ($selectionRectMode === 'user') {
       selectionRectMode.set(selectedNodes.length > 0 ? 'nodes' : null);
       //  onSelectionEnd?.(event);
@@ -196,6 +202,7 @@
 <div
   bind:this={container}
   class="svelte-flow__pane"
+  class:draggable={panOnDrag}
   class:dragging={$dragging}
   class:selection={isSelecting}
   on:click={hasActiveSelection ? undefined : wrapHandler(onClick, container)}

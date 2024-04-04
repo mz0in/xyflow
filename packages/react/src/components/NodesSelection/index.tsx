@@ -2,27 +2,26 @@
  * The nodes selection rectangle gets displayed when a user
  * made a selection with on or several nodes
  */
-
-import { memo, useRef, useEffect, type MouseEvent, type KeyboardEvent } from 'react';
+import { useRef, useEffect, type MouseEvent, type KeyboardEvent } from 'react';
 import cc from 'classcat';
 import { shallow } from 'zustand/shallow';
-import { getRectOfNodes } from '@xyflow/system';
+import { getNodesBounds } from '@xyflow/system';
 
 import { useStore, useStoreApi } from '../../hooks/useStore';
-import useDrag from '../../hooks/useDrag';
-import { arrowKeyDiffs } from '../Nodes/wrapNode';
-import useUpdateNodePositions from '../../hooks/useUpdateNodePositions';
+import { useDrag } from '../../hooks/useDrag';
+import { useMoveSelectedNodes } from '../../hooks/useMoveSelectedNodes';
+import { arrowKeyDiffs } from '../NodeWrapper/utils';
 import type { Node, ReactFlowState } from '../../types';
 
-export type NodesSelectionProps = {
-  onSelectionContextMenu?: (event: MouseEvent, nodes: Node[]) => void;
+export type NodesSelectionProps<NodeType> = {
+  onSelectionContextMenu?: (event: MouseEvent, nodes: NodeType[]) => void;
   noPanClassName?: string;
   disableKeyboardA11y: boolean;
 };
 
 const selector = (s: ReactFlowState) => {
   const selectedNodes = s.nodes.filter((n) => n.selected);
-  const { width, height, x, y } = getRectOfNodes(selectedNodes, s.nodeOrigin);
+  const { width, height, x, y } = getNodesBounds(selectedNodes, { nodeOrigin: s.nodeOrigin });
 
   return {
     width,
@@ -32,10 +31,14 @@ const selector = (s: ReactFlowState) => {
   };
 };
 
-function NodesSelection({ onSelectionContextMenu, noPanClassName, disableKeyboardA11y }: NodesSelectionProps) {
-  const store = useStoreApi();
+export function NodesSelection<NodeType extends Node>({
+  onSelectionContextMenu,
+  noPanClassName,
+  disableKeyboardA11y,
+}: NodesSelectionProps<NodeType>) {
+  const store = useStoreApi<NodeType>();
   const { width, height, transformString, userSelectionActive } = useStore(selector, shallow);
-  const updatePositions = useUpdateNodePositions();
+  const moveSelectedNodes = useMoveSelectedNodes();
 
   const nodeRef = useRef<HTMLDivElement>(null);
 
@@ -64,10 +67,9 @@ function NodesSelection({ onSelectionContextMenu, noPanClassName, disableKeyboar
 
   const onKeyDown = (event: KeyboardEvent) => {
     if (Object.prototype.hasOwnProperty.call(arrowKeyDiffs, event.key)) {
-      updatePositions({
-        x: arrowKeyDiffs[event.key].x,
-        y: arrowKeyDiffs[event.key].y,
-        isShiftPressed: event.shiftKey,
+      moveSelectedNodes({
+        direction: arrowKeyDiffs[event.key],
+        factor: event.shiftKey ? 4 : 1,
       });
     }
   };
@@ -93,5 +95,3 @@ function NodesSelection({ onSelectionContextMenu, noPanClassName, disableKeyboar
     </div>
   );
 }
-
-export default memo(NodesSelection);

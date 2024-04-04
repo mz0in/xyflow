@@ -1,13 +1,15 @@
 import { useContext, type ReactNode } from 'react';
 
 import StoreContext from '../../contexts/RFStoreContext';
-import ReactFlowProvider from '../../components/ReactFlowProvider';
+import { ReactFlowProvider } from '../../components/ReactFlowProvider';
 import type { Node, Edge } from '../../types';
 
-function Wrapper({
+export function Wrapper({
   children,
   nodes,
   edges,
+  defaultNodes,
+  defaultEdges,
   width,
   height,
   fitView,
@@ -15,6 +17,8 @@ function Wrapper({
   children: ReactNode;
   nodes?: Node[];
   edges?: Edge[];
+  defaultNodes?: Node[];
+  defaultEdges?: Edge[];
   width?: number;
   height?: number;
   fitView?: boolean;
@@ -31,6 +35,8 @@ function Wrapper({
     <ReactFlowProvider
       initialNodes={nodes}
       initialEdges={edges}
+      defaultNodes={defaultNodes}
+      defaultEdges={defaultEdges}
       initialWidth={width}
       initialHeight={height}
       fitView={fitView}
@@ -39,7 +45,3 @@ function Wrapper({
     </ReactFlowProvider>
   );
 }
-
-Wrapper.displayName = 'ReactFlowWrapper';
-
-export default Wrapper;

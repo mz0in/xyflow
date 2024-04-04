@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, hasContext } from 'svelte';
+  import { get } from 'svelte/store';
   import cc from 'classcat';
   import { ConnectionMode, PanOnScrollMode, type Viewport } from '@xyflow/system';
 
@@ -16,7 +17,7 @@
   import { key, useStore, createStoreContext } from '$lib/store';
   import type { SvelteFlowProps } from './types';
   import { updateStore, updateStoreByKeys, type UpdatableStoreProps } from './utils';
-  import { get } from 'svelte/store';
+  import { useColorModeClass } from '$lib/hooks/useColorModeClass';
 
   type $$Props = SvelteFlowProps;
 
@@ -34,6 +35,8 @@
   export let selectionKey: $$Props['selectionKey'] = undefined;
   export let selectionMode: $$Props['selectionMode'] = undefined;
   export let panActivationKey: $$Props['panActivationKey'] = undefined;
+  export let multiSelectionKey: $$Props['multiSelectionKey'] = undefined;
+  export let zoomActivationKey: $$Props['zoomActivationKey'] = undefined;
   export let nodesDraggable: $$Props['nodesDraggable'] = undefined;
   export let nodesConnectable: $$Props['nodesConnectable'] = undefined;
   export let nodeDragThreshold: $$Props['nodeDragThreshold'] = undefined;
@@ -58,14 +61,23 @@
   export let zoomOnPinch: $$Props['zoomOnPinch'] = true;
   export let panOnScroll: $$Props['panOnScroll'] = false;
   export let panOnDrag: $$Props['panOnDrag'] = true;
+  export let selectionOnDrag: $$Props['selectionOnDrag'] = undefined;
   export let autoPanOnConnect: $$Props['autoPanOnConnect'] = true;
   export let autoPanOnNodeDrag: $$Props['autoPanOnNodeDrag'] = true;
-  export let onError: $$Props['onError'] = undefined;
+  export let onerror: $$Props['onerror'] = undefined;
+  export let ondelete: $$Props['ondelete'] = undefined;
+  export let onedgecreate: $$Props['onedgecreate'] = undefined;
   export let attributionPosition: $$Props['attributionPosition'] = undefined;
   export let proOptions: $$Props['proOptions'] = undefined;
   export let defaultEdgeOptions: $$Props['defaultEdgeOptions'] = undefined;
   export let width: $$Props['width'] = undefined;
   export let height: $$Props['height'] = undefined;
+  export let colorMode: $$Props['colorMode'] = 'light';
+  export let onconnect: $$Props['onconnect'] = undefined;
+  export let onconnectstart: $$Props['onconnectstart'] = undefined;
+  export let onconnectend: $$Props['onconnectend'] = undefined;
+  export let onbeforedelete: $$Props['onbeforedelete'] = undefined;
+  export let oninit: $$Props['oninit'] = undefined;
 
   export let defaultMarkerColor = '#b1b1b7';
 
@@ -119,6 +131,16 @@
     }
   }
 
+  // Call oninit once when flow is intialized
+  const { initialized } = store;
+  let onInitCalled = false;
+  $: {
+    if (!onInitCalled && $initialized) {
+      oninit?.();
+      onInitCalled = true;
+    }
+  }
+
   // this updates the store for simple changes
   // where the prop names equals the store name
   $: {
@@ -136,9 +158,15 @@
       isValidConnection,
       autoPanOnConnect,
       autoPanOnNodeDrag,
-      onError,
+      onerror,
+      ondelete,
+      onedgecreate,
       connectionMode,
-      nodeDragThreshold
+      nodeDragThreshold,
+      onconnect,
+      onconnectstart,
+      onconnectend,
+      onbeforedelete
     };
 
     updateStoreByKeys(store, updatableProps);
@@ -151,6 +179,8 @@
     maxZoom,
     translateExtent
   });
+
+  $: colorModeClass = useColorModeClass(colorMode);
 </script>
 
 <div
@@ -158,14 +188,20 @@
   bind:clientWidth
   bind:clientHeight
   {style}
-  class={cc(['svelte-flow', className])}
+  class={cc(['svelte-flow', className, $colorModeClass])}
   data-testid="svelte-flow__wrapper"
   on:dragover
   on:drop
   {...$$restProps}
   role="application"
 >
-  <KeyHandler {selectionKey} {deleteKey} {panActivationKey} />
+  <KeyHandler
+    {selectionKey}
+    {deleteKey}
+    {panActivationKey}
+    {multiSelectionKey}
+    {zoomActivationKey}
+  />
   <Zoom
     {initialViewport}
     {onMoveStart}
@@ -179,7 +215,12 @@
     panOnScroll={panOnScroll === undefined ? false : panOnScroll}
     panOnDrag={panOnDrag === undefined ? true : panOnDrag}
   >
-    <Pane on:paneclick panOnDrag={panOnDrag === undefined ? true : panOnDrag}>
+    <Pane
+      on:paneclick
+      on:panecontextmenu
+      panOnDrag={panOnDrag === undefined ? true : panOnDrag}
+      {selectionOnDrag}
+    >
       <ViewportComponent>
         <EdgeRenderer on:edgeclick on:edgecontextmenu {defaultEdgeOptions} />
         <ConnectionLine
@@ -190,20 +231,24 @@
           <slot name="connectionLine" slot="connectionLine" />
         </ConnectionLine>
         <div class="svelte-flow__edgelabel-renderer" />
+        <div class="svelte-flow__viewport-portal" />
         <NodeRenderer
           on:nodeclick
           on:nodemouseenter
           on:nodemousemove
           on:nodemouseleave
-          on:connectstart
-          on:connect
-          on:connectend
           on:nodedragstart
           on:nodedrag
           on:nodedragstop
           on:nodecontextmenu
         />
-        <NodeSelection />
+        <NodeSelection
+          on:selectionclick
+          on:selectioncontextmenu
+          on:nodedragstart
+          on:nodedrag
+          on:nodedragstop
+        />
       </ViewportComponent>
       <UserSelection />
     </Pane>

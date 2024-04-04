@@ -22,8 +22,8 @@ export function getHandles(
         id: h.id || null,
         type,
         nodeId: node.id,
-        x: (node.positionAbsolute?.x ?? 0) + h.x + h.width / 2,
-        y: (node.positionAbsolute?.y ?? 0) + h.y + h.height / 2,
+        x: (node.computed?.positionAbsolute?.x ?? 0) + h.x + h.width / 2,
+        y: (node.computed?.positionAbsolute?.y ?? 0) + h.y + h.height / 2,
       });
     }
     return res;
@@ -38,7 +38,7 @@ export function getClosestHandle(
   let closestHandles: ConnectionHandle[] = [];
   let minDistance = Infinity;
 
-  handles.forEach((handle) => {
+  for (const handle of handles) {
     const distance = Math.sqrt(Math.pow(handle.x - pos.x, 2) + Math.pow(handle.y - pos.y, 2));
     if (distance <= connectionRadius) {
       if (distance < minDistance) {
@@ -49,7 +49,7 @@ export function getClosestHandle(
       }
       minDistance = distance;
     }
-  });
+  }
 
   if (!closestHandles.length) {
     return null;
@@ -99,10 +99,6 @@ export function getHandleType(
   }
 
   return null;
-}
-
-export function resetRecentHandle(handleDomNode: Element, lib: string): void {
-  handleDomNode?.classList.remove('valid', 'connecting', `${lib}-flow__handle-valid`, `${lib}-flow__handle-connecting`);
 }
 
 export function getConnectionStatus(isInsideConnectionRadius: boolean, isHandleValid: boolean) {

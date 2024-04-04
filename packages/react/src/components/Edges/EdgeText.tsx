@@ -1,10 +1,10 @@
-import { memo, useRef, useState, useEffect, type FC, type PropsWithChildren } from 'react';
+import { memo, useState, useCallback } from 'react';
 import cc from 'classcat';
 import type { Rect } from '@xyflow/system';
 
 import type { EdgeTextProps } from '../../types';
 
-const EdgeText: FC<PropsWithChildren<EdgeTextProps>> = ({
+function EdgeTextComponent({
   x,
   y,
   label,
@@ -16,23 +16,22 @@ const EdgeText: FC<PropsWithChildren<EdgeTextProps>> = ({
   children,
   className,
   ...rest
-}) => {
-  const edgeRef = useRef<SVGTextElement>(null);
-  const [edgeTextBbox, setEdgeTextBbox] = useState<Rect>({ x: 0, y: 0, width: 0, height: 0 });
+}: EdgeTextProps) {
+  const [edgeTextBbox, setEdgeTextBbox] = useState<Rect>({ x: 1, y: 0, width: 0, height: 0 });
   const edgeTextClasses = cc(['react-flow__edge-textwrapper', className]);
 
-  useEffect(() => {
-    if (edgeRef.current) {
-      const textBbox = edgeRef.current.getBBox();
+  const onEdgeTextRefChange = useCallback((edgeRef: SVGTextElement) => {
+    if (edgeRef === null) return;
 
-      setEdgeTextBbox({
-        x: textBbox.x,
-        y: textBbox.y,
-        width: textBbox.width,
-        height: textBbox.height,
-      });
-    }
-  }, [label]);
+    const textBbox = edgeRef.getBBox();
+
+    setEdgeTextBbox({
+      x: textBbox.x,
+      y: textBbox.y,
+      width: textBbox.width,
+      height: textBbox.height,
+    });
+  }, []);
 
   if (typeof label === 'undefined' || !label) {
     return null;
@@ -57,11 +56,20 @@ const EdgeText: FC<PropsWithChildren<EdgeTextProps>> = ({
           ry={labelBgBorderRadius}
         />
       )}
-      <text className="react-flow__edge-text" y={edgeTextBbox.height / 2} dy="0.3em" ref={edgeRef} style={labelStyle}>
+      <text
+        className="react-flow__edge-text"
+        y={edgeTextBbox.height / 2}
+        dy="0.3em"
+        ref={onEdgeTextRefChange}
+        style={labelStyle}
+      >
         {label}
       </text>
       {children}
     </g>
   );
-};
-export default memo(EdgeText);
+}
+
+EdgeTextComponent.displayName = 'EdgeText';
+
+export const EdgeText = memo(EdgeTextComponent);

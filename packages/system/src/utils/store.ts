@@ -9,6 +9,9 @@ import {
   Transform,
   XYPosition,
   XYZPosition,
+  ConnectionLookup,
+  EdgeBase,
+  EdgeLookup,
 } from '../types';
 import { getDimensions, getHandleBounds } from './dom';
 import { isNumeric } from './general';
@@ -18,19 +21,21 @@ type ParentNodes = Record<string, boolean>;
 
 export function updateAbsolutePositions<NodeType extends NodeBase>(
   nodes: NodeType[],
+  nodeLookup: Map<string, NodeType>,
   nodeOrigin: NodeOrigin = [0, 0],
   parentNodes?: ParentNodes
 ) {
   return nodes.map((node) => {
-    if (node.parentNode && !nodes.find((n) => n.id === node.parentNode)) {
+    if (node.parentNode && !nodeLookup.has(node.parentNode)) {
       throw new Error(`Parent node ${node.parentNode} not found`);
     }
 
     if (node.parentNode || parentNodes?.[node.id]) {
-      const parentNode = node.parentNode ? nodes.find((n) => n.id === node.parentNode) : null;
+      const parentNode = node.parentNode ? nodeLookup.get(node.parentNode) : null;
       const { x, y, z } = calculateXYZPosition(
         node,
         nodes,
+        nodeLookup,
         {
           ...node.position,
           z: node[internalsSymbol]?.z ?? 0,
@@ -38,10 +43,13 @@ export function updateAbsolutePositions<NodeType extends NodeBase>(
         parentNode?.origin || nodeOrigin
       );
 
-      node.positionAbsolute = {
-        x,
-        y,
-      };
+      const positionChanged = x !== node.computed?.positionAbsolute?.x || y !== node.computed?.positionAbsolute?.y;
+      node.computed!.positionAbsolute = positionChanged
+        ? {
+            x,
+            y,
+          }
+        : node.computed?.positionAbsolute;
 
       node[internalsSymbol]!.z = z;
 
@@ -60,26 +68,35 @@ type UpdateNodesOptions<NodeType extends NodeBase> = {
   defaults?: Partial<NodeType>;
 };
 
-export function updateNodes<NodeType extends NodeBase>(
+export function adoptUserProvidedNodes<NodeType extends NodeBase>(
   nodes: NodeType[],
-  storeNodes: NodeType[],
+  nodeLookup: Map<string, NodeType>,
   options: UpdateNodesOptions<NodeType> = {
     nodeOrigin: [0, 0] as NodeOrigin,
     elevateNodesOnSelect: true,
     defaults: {},
   }
 ): NodeType[] {
+  const tmpLookup = new Map(nodeLookup);
+  nodeLookup.clear();
   const parentNodes: ParentNodes = {};
   const selectedNodeZ: number = options?.elevateNodesOnSelect ? 1000 : 0;
 
   const nextNodes = nodes.map((n) => {
-    const currentStoreNode = storeNodes.find((storeNode) => n.id === storeNode.id);
+    const currentStoreNode = tmpLookup.get(n.id);
+    if (n === currentStoreNode?.[internalsSymbol]?.userProvidedNode) {
+      nodeLookup.set(n.id, currentStoreNode);
+      return currentStoreNode;
+    }
+
     const node: NodeType = {
       ...options.defaults,
       ...n,
-      positionAbsolute: n.position,
-      width: n.width || currentStoreNode?.width,
-      height: n.height || currentStoreNode?.height,
+      computed: {
+        positionAbsolute: n.position,
+        width: n.computed?.width,
+        height: n.computed?.height,
+      },
     };
     const z = (isNumeric(n.zIndex) ? n.zIndex : 0) + (n.selected ? selectedNodeZ : 0);
     const currInternals = n?.[internalsSymbol] || currentStoreNode?.[internalsSymbol];
@@ -93,13 +110,16 @@ export function updateNodes<NodeType extends NodeBase>(
       value: {
         handleBounds: currInternals?.handleBounds,
         z,
+        userProvidedNode: n,
       },
     });
+
+    nodeLookup.set(node.id, node);
 
     return node;
   });
 
-  const nodesWithPositions = updateAbsolutePositions(nextNodes, options.nodeOrigin, parentNodes);
+  const nodesWithPositions = updateAbsolutePositions(nextNodes, nodeLookup, options.nodeOrigin, parentNodes);
 
   return nodesWithPositions;
 }
@@ -107,6 +127,7 @@ export function updateNodes<NodeType extends NodeBase>(
 function calculateXYZPosition<NodeType extends NodeBase>(
   node: NodeType,
   nodes: NodeType[],
+  nodeLookup: Map<string, NodeType>,
   result: XYZPosition,
   nodeOrigin: NodeOrigin
 ): XYZPosition {
@@ -114,12 +135,13 @@ function calculateXYZPosition<NodeType extends NodeBase>(
     return result;
   }
 
-  const parentNode = nodes.find((n) => n.id === node.parentNode)!;
-  const parentNodePosition = getNodePositionWithOrigin(parentNode, parentNode?.origin || nodeOrigin);
+  const parentNode = nodeLookup.get(node.parentNode)!;
+  const { position: parentNodePosition } = getNodePositionWithOrigin(parentNode, parentNode?.origin || nodeOrigin);
 
   return calculateXYZPosition(
     parentNode,
     nodes,
+    nodeLookup,
     {
       x: (result.x ?? 0) + parentNodePosition.x,
       y: (result.y ?? 0) + parentNodePosition.y,
@@ -129,13 +151,14 @@ function calculateXYZPosition<NodeType extends NodeBase>(
   );
 }
 
-export function updateNodeDimensions(
-  updates: NodeDimensionUpdate[],
-  nodes: NodeBase[],
+export function updateNodeDimensions<NodeType extends NodeBase>(
+  updates: Map<string, NodeDimensionUpdate>,
+  nodes: NodeType[],
+  nodeLookup: Map<string, NodeType>,
   domNode: HTMLElement | null,
   nodeOrigin?: NodeOrigin,
   onUpdate?: (id: string, dimensions: Dimensions) => void
-): NodeBase[] | null {
+): NodeType[] | null {
   const viewportNode = domNode?.querySelector('.xyflow__viewport');
 
   if (!viewportNode) {
@@ -146,21 +169,25 @@ export function updateNodeDimensions(
   const { m22: zoom } = new window.DOMMatrixReadOnly(style.transform);
 
   const nextNodes = nodes.map((node) => {
-    const update = updates.find((u) => u.id === node.id);
+    const update = updates.get(node.id);
+
     if (update) {
       const dimensions = getDimensions(update.nodeElement);
       const doUpdate = !!(
         dimensions.width &&
         dimensions.height &&
-        (node.width !== dimensions.width || node.height !== dimensions.height || update.forceUpdate)
+        (node.computed?.width !== dimensions.width || node.computed?.height !== dimensions.height || update.forceUpdate)
       );
 
       if (doUpdate) {
         onUpdate?.(node.id, dimensions);
 
-        return {
+        const newNode = {
           ...node,
-          ...dimensions,
+          computed: {
+            ...node.computed,
+            ...dimensions,
+          },
           [internalsSymbol]: {
             ...node[internalsSymbol],
             handleBounds: {
@@ -169,6 +196,10 @@ export function updateNodeDimensions(
             },
           },
         };
+
+        nodeLookup.set(node.id, newNode);
+
+        return newNode;
       }
     }
 
@@ -215,4 +246,24 @@ export function panBy({
     (nextViewport.x !== transform[0] || nextViewport.y !== transform[1] || nextViewport.k !== transform[2]);
 
   return transformChanged;
+}
+
+export function updateConnectionLookup(connectionLookup: ConnectionLookup, edgeLookup: EdgeLookup, edges: EdgeBase[]) {
+  connectionLookup.clear();
+  edgeLookup.clear();
+
+  for (const edge of edges) {
+    const { source, target, sourceHandle = null, targetHandle = null } = edge;
+
+    const sourceKey = `${source}-source-${sourceHandle}`;
+    const targetKey = `${target}-target-${targetHandle}`;
+
+    const prevSource = connectionLookup.get(sourceKey) || new Map();
+    const prevTarget = connectionLookup.get(targetKey) || new Map();
+    const connection = { edgeId: edge.id, source, target, sourceHandle, targetHandle };
+
+    edgeLookup.set(edge.id, edge);
+    connectionLookup.set(sourceKey, prevSource.set(`${target}-${targetHandle}`, connection));
+    connectionLookup.set(targetKey, prevTarget.set(`${source}-${sourceHandle}`, connection));
+  }
 }

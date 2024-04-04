@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { Position, type NodeProps } from '@xyflow/system';
+  import { Position } from '@xyflow/system';
 
   import { Handle } from '$lib/components/Handle';
+  import type { NodeProps } from '$lib/types';
 
-  interface $$Props extends NodeProps<{ label: string }> {}
+  interface $$Props extends NodeProps {}
 
   export let data: $$Props['data'] = { label: 'Node' };
   export let targetPosition: $$Props['targetPosition'] = Position.Top;
@@ -11,27 +12,31 @@
 
   // unused props - we need to list them here in order to prevent warnings
   export let id: $$Props['id'] = '';
+  export let width: $$Props['width'] = undefined;
+  export let height: $$Props['height'] = undefined;
   export let selected: $$Props['selected'] = undefined;
   export let type: $$Props['type'] = undefined;
-  export let zIndex: $$Props['zIndex'] = undefined;
   export let dragging: $$Props['dragging'] = false;
   export let dragHandle: $$Props['dragHandle'] = undefined;
-  export let xPos: $$Props['xPos'] = 0;
-  export let yPos: $$Props['yPos'] = 0;
-  export let isConnectable: $$Props['isConnectable'] = undefined;
+  export let positionAbsoluteX: $$Props['positionAbsoluteX'] = 0;
+  export let positionAbsoluteY: $$Props['positionAbsoluteY'] = 0;
+  export let isConnectable: $$Props['isConnectable'];
+  export let zIndex: $$Props['zIndex'];
 
   // @todo: there must be a better way to do this
   id;
+  width;
+  height;
   selected;
   type;
   zIndex;
   dragging;
   dragHandle;
-  xPos;
-  yPos;
+  positionAbsoluteX;
+  positionAbsoluteY;
   isConnectable;
 </script>
 
-<Handle type="target" position={targetPosition} on:connectstart on:connect on:connectend />
+<Handle type="target" position={targetPosition} />
 {data?.label}
-<Handle type="source" position={sourcePosition} on:connectstart on:connect on:connectend />
+<Handle type="source" position={sourcePosition} />

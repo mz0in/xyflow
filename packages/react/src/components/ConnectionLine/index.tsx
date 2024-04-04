@@ -43,7 +43,7 @@ const ConnectionLine = ({
   const { fromNode, handleId, toX, toY, connectionMode } = useStore(
     useCallback(
       (s: ReactFlowStore) => ({
-        fromNode: s.nodes.find((n) => n.id === nodeId),
+        fromNode: s.nodeLookup.get(nodeId),
         handleId: s.connectionStartHandle?.handleId,
         toX: (s.connectionPosition.x - s.transform[0]) / s.transform[2],
         toY: (s.connectionPosition.y - s.transform[1]) / s.transform[2],
@@ -65,10 +65,10 @@ const ConnectionLine = ({
   }
 
   const fromHandle = handleId ? handleBounds.find((d) => d.id === handleId) : handleBounds[0];
-  const fromHandleX = fromHandle ? fromHandle.x + fromHandle.width / 2 : (fromNode.width ?? 0) / 2;
-  const fromHandleY = fromHandle ? fromHandle.y + fromHandle.height / 2 : fromNode.height ?? 0;
-  const fromX = (fromNode.positionAbsolute?.x ?? 0) + fromHandleX;
-  const fromY = (fromNode.positionAbsolute?.y ?? 0) + fromHandleY;
+  const fromHandleX = fromHandle ? fromHandle.x + fromHandle.width / 2 : (fromNode.computed?.width ?? 0) / 2;
+  const fromHandleY = fromHandle ? fromHandle.y + fromHandle.height / 2 : fromNode.computed?.height ?? 0;
+  const fromX = (fromNode.computed?.positionAbsolute?.x ?? 0) + fromHandleX;
+  const fromY = (fromNode.computed?.positionAbsolute?.y ?? 0) + fromHandleY;
   const fromPosition = fromHandle?.position;
   const toPosition = fromPosition ? oppositePosition[fromPosition] : null;
 
@@ -142,7 +142,7 @@ const selector = (s: ReactFlowState) => ({
   height: s.height,
 });
 
-function ConnectionLineWrapper({ containerStyle, style, type, component }: ConnectionLineWrapperProps) {
+export function ConnectionLineWrapper({ containerStyle, style, type, component }: ConnectionLineWrapperProps) {
   const { nodeId, handleType, nodesConnectable, width, height, connectionStatus } = useStore(selector, shallow);
   const isValid = !!(nodeId && handleType && width && nodesConnectable);
 
@@ -155,7 +155,7 @@ function ConnectionLineWrapper({ containerStyle, style, type, component }: Conne
       style={containerStyle}
       width={width}
       height={height}
-      className="react-flow__edges react-flow__connectionline react-flow__container"
+      className="react-flow__connectionline react-flow__container"
     >
       <g className={cc(['react-flow__connection', connectionStatus])}>
         <ConnectionLine
@@ -170,5 +170,3 @@ function ConnectionLineWrapper({ containerStyle, style, type, component }: Conne
     </svg>
   );
 }
-
-export default ConnectionLineWrapper;
